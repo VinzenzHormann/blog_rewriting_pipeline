@@ -1,0 +1,6 @@
+venv/
+*.db
+__pycache__/
+.vscode/
+.env
+pipeline.db
