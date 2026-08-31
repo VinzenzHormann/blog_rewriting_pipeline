@@ -24,6 +24,7 @@ core/                  -- Platform-agnostic logic (schema, AI rewrite, review UI
 adapters/              -- Platform adapters; converts raw site data to/from the common schema
 adapters/seo_plugins/  -- Plugin adapters (RankMath, Yoast, etc.) to handle distinct meta description formats
 run.py                 -- CLI entry point: `python run.py --step fetch|rewrite|review|publish`
+```
 
 
 Data is staged in a local SQLite database (`pipeline.db`) rather than a flat CSV file so that each post can track its state (`fetched` → `rewritten` → `reviewed` → `published`). This structure enables the pipeline to resume safely without reprocessing content from scratch after an interruption.
