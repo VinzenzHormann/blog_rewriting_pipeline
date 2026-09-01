@@ -17,6 +17,8 @@ CREATE TABLE IF NOT EXISTS posts (
     body TEXT,
     meta_description TEXT,
     category TEXT,
+    gsc_position REAL,
+    top_keywords TEXT,
 
     -- AI-rewritten versions, filled in during the 'rewrite' step
     new_title TEXT,

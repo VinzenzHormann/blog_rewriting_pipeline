@@ -6,16 +6,16 @@ Usage:
     python run.py --step fetch --limit 10      # fetch just 10, for testing
 """
 import argparse
-import datetime
+from datetime import datetime, timezone
 
 from core.schema import init_db, get_connection
-from adapters import wp_freyaart
-
+from adapters import wp_freyaart, gsc_adapter
+BASE_URL = "https://www.freyartt.com/"
 
 def step_fetch(args):
     init_db()
     conn = get_connection()
-    now = datetime.datetime.utcnow().isoformat()
+    now = datetime.now(timezone.utc).isoformat()
 
     count = 0
     for post in wp_freyaart.fetch_posts(max_pages=args.limit):
@@ -37,16 +37,37 @@ def step_fetch(args):
         )
         count += 1
         print(f"  fetched [{post['post_id']}] {post['title'][:60]}")
+    print(f"\nDone. {count} posts stored in pipeline.db")
+    conn.commit()
 
+def step_update_gsc(args):
+    init_db()
+    conn = get_connection()
+    now = datetime.now(timezone.utc).isoformat()
+    seo_data = gsc_adapter.fetch_page_seo_data(BASE_URL)   
+    
+    for url, data in seo_data.items():
+        
+        # Convert list of keywords to JSON string if returned as a list
+        keywords = json.dumps(data['top_keywords']) if isinstance(data['top_keywords'], list) else data['top_keywords']
+        conn.execute(
+            "UPDATE posts SET gsc_position = ?, top_keywords = ? WHERE url = ?",
+            (data['position'], keywords, url)
+        )
+        
+    
     conn.commit()
     conn.close()
-    print(f"\nDone. {count} posts stored in pipeline.db")
+    print(f"\nDone. Updated posts with GSC positions and keywords.")
+    
 
 
 def main():
     parser = argparse.ArgumentParser(description="Freya Art blog automation pipeline")
     parser.add_argument(
-        "--step", required=True, choices=["fetch", "rewrite", "review", "publish"]
+        "--step", 
+        required=True, 
+        choices=["fetch", "rank", "all", "rewrite", "review", "publish"]
     )
     parser.add_argument(
         "--limit", type=int, default=None, help="Limit number of posts (handy for testing)"
@@ -55,9 +76,14 @@ def main():
 
     if args.step == "fetch":
         step_fetch(args)
+    elif args.step == "rank":
+        step_update_gsc(args)
+    elif args.step == "all":
+        print("--- Step 1: Fetching WordPress Posts ---")
+        step_fetch(args)
+        print("\n--- Step 2: Updating GSC Metrics ---")
+        step_update_gsc(args)
     else:
         print(f"Step '{args.step}' isn't built yet -- that's the next piece to add.")
-
-
 if __name__ == "__main__":
     main()

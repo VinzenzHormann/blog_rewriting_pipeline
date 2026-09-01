@@ -4,3 +4,9 @@ __pycache__/
 .vscode/
 .env
 pipeline.db
+
+
+# API Credentials & Keys
+gsc_credentials.json
+*.json
+!package.json
