@@ -92,7 +92,7 @@ def fetch_posts(max_pages=None):
                     # whichever SEO plugin is active (Yoast/RankMath/etc). Check
                     # which plugin freyartt.com uses and extend this once confirmed.
                     "meta_description": rankmath.get_meta_description(post["link"], BASE_URL, session=session),
-                    "category": category_names,
+                    "category": category_names,                    
                     "status": "fetched",
                 }
 

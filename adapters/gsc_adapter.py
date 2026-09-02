@@ -5,9 +5,11 @@ from googleapiclient.discovery import build
 
 import datetime
 from dateutil.relativedelta import relativedelta
+import time
 
 SCOPES = ['https://www.googleapis.com/auth/webmasters.readonly']
 CREDENTIALS_FILE = 'gsc_credentials.json'
+BASE_URL = "https://www.freyartt.com/"
 
 now = datetime.datetime.now(datetime.UTC)
 now_date = now.date()
@@ -89,3 +91,56 @@ def fetch_page_seo_data(site_url, top_n=5):
 
     print(f"length of dict: {len(results)}")
     return results
+    
+def inspect_urls_index_status(no_position_no_keyword_posts):
+    
+    print(f"Found {len(no_position_no_keyword_posts)} posts missing GSC metrics in pipeline.db.")    
+    
+    if not os.path.exists(CREDENTIALS_FILE):
+        raise FileNotFoundError(f"Missing credentials file: {CREDENTIALS_FILE} in project root.")
+
+    creds = service_account.Credentials.from_service_account_file(
+        CREDENTIALS_FILE, scopes=SCOPES
+    )
+    service = build('searchconsole', 'v1', credentials=creds)
+
+
+    indexed_no_traffic = []
+    not_indexed = []
+
+    for post_id, url in no_position_no_keyword_posts:
+        request_body = {
+            'inspectionUrl': url,
+            'siteUrl': BASE_URL
+        }
+        
+        try:
+            # Query the GSC URL Inspection API
+            response = service.urlInspection().index().inspect(body=request_body).execute()
+            result = response.get('inspectionResult', {}).get('indexStatusResult', {})
+            
+            coverage_state = result.get('coverageState', 'UNKNOWN')
+            verdict = result.get('verdict', 'NEUTRAL')
+
+            if verdict == 'PASS':
+                indexed_no_traffic.append(url)
+                print(f"[INDEXED / NO TRAFFIC] {url}")
+            else:
+                not_indexed.append((url, coverage_state))
+                print(f"[NOT INDEXED] {url} -> Status: {coverage_state}")
+
+            # Sleep slightly to avoid rate-limiting
+            time.sleep(0.2)
+
+        except Exception as e:
+            print(f"Error inspecting {url}: {e}")
+
+    print("\n--- SUMMARY ---")
+    print(f"Indexed (but 0 impressions): {len(indexed_no_traffic)}")
+    print(f"Not Indexed: {len(not_indexed)}")
+    
+    return {
+        "indexed": indexed_no_traffic,
+        "not_indexed": not_indexed
+    }
+    

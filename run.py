@@ -60,14 +60,51 @@ def step_update_gsc(args):
     conn.close()
     print(f"\nDone. Updated posts with GSC positions and keywords.")
     
-
+def step_search_for_not_indexed_posts(args):
+    init_db()
+    conn = get_connection()
+    now = datetime.now(timezone.utc).isoformat()
+    
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT post_id, url 
+        FROM posts 
+        WHERE gsc_position IS NULL OR gsc_position = 0
+    """)
+    no_position_no_keyword_posts = cursor.fetchall()
+    
+    if not no_position_no_keyword_posts:
+        print("No unranked posts found in database.")
+        conn.close()
+        return
+    
+    unindexed_status_results = gsc_adapter.inspect_urls_index_status(no_position_no_keyword_posts)
+    
+#    for url in unindexed_status_results["indexed"]:
+#        conn.execute(
+#            "UPDATE posts SET status = 'zero_traffic', updated_at = ? WHERE url = ?",
+#            now, url)
+#        )
+    
+    for url, coverage_state in unindexed_status_results["not_indexed"]:
+        conn.execute(
+            "UPDATE posts SET status = 'not_indexed', updated_at = ? WHERE url = ?",
+            (now, url)
+        )
+    
+    conn.commit()
+    conn.close()
+    
+    print(f"\nSuccessfully updated database status for {len(unranked_posts)} posts:")
+    print(f" - {len(results['indexed'])} marked as 'zero_traffic'")
+    print(f" - {len(results['not_indexed'])} marked as 'not_indexed'")
 
 def main():
     parser = argparse.ArgumentParser(description="Freya Art blog automation pipeline")
     parser.add_argument(
         "--step", 
         required=True, 
-        choices=["fetch", "rank", "all", "rewrite", "review", "publish"]
+        choices=["fetch", "rank", "all", "inspect_not_listed", "rewrite", "review", "publish"]
     )
     parser.add_argument(
         "--limit", type=int, default=None, help="Limit number of posts (handy for testing)"
@@ -78,11 +115,15 @@ def main():
         step_fetch(args)
     elif args.step == "rank":
         step_update_gsc(args)
+    elif args.step == "inspect_not_listed":
+        step_search_for_not_indexed_posts(args)
     elif args.step == "all":
         print("--- Step 1: Fetching WordPress Posts ---")
         step_fetch(args)
         print("\n--- Step 2: Updating GSC Metrics ---")
         step_update_gsc(args)
+        print("\n--- Step 3: Chanking not indexed posts---")
+        step_search_for_not_indexed_posts(args)
     else:
         print(f"Step '{args.step}' isn't built yet -- that's the next piece to add.")
 if __name__ == "__main__":
