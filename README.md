@@ -2,7 +2,7 @@
 
 This pipeline automates post rewrites to make them consistent in language style, SEO quality, SEO conventions, length, and formatting.
 
-The initial target for this project is the live website **freyaart.com**. Over time, FreyaArt has accumulated over 700 blog posts written with inconsistent tone, structure, and SEO quality. Rewriting all of them manually is impractical.
+The initial target for this project is the live website **freyartt.com**. Over time, FreyaArt has accumulated over 700 blog posts written with inconsistent tone, structure, and SEO quality. Rewriting all of them manually is impractical.
 
 The project is actively developed to be extensible to other clients and platforms beyond WordPress.
 
@@ -27,7 +27,7 @@ run.py                 -- CLI entry point: `python run.py --step fetch|rewrite|r
 
 * **Fetch** — Pulls live content inventory (posts and pages) containing URL, title, body markdown, subheadings, and category structure.. Starts with the WordPress REST API, with plans to incorporate custom scraping and support for third-party provider APIs (e.g., Blogspot, Shopify, Wix).
 * **Meta Description Enrichment** Retrieves RankMath/Yoast meta descriptions via dedicated API adapters.
-* ** GSC Performance Ingestion** Pulls average position, impressions, and clicks for each live URL via the Google Search Console API.
+* **GSC Performance Ingestion** Pulls average position, impressions, and clicks for each live URL via the Google Search Console API.
 * **GSC Inspection API Sync** Executes targeted inspection queries for zero-impression/no-position posts to retrieve exact coverage states (Crawled - currently not indexed, Submitted and indexed, Server error (5xx), etc.).
 * **Bitmask Classification** Evaluates content against structural, quality, and performance criteria, assigning an 8-bit integer bitmask (flags) and updating the post pipeline status.
 * **Dynamic AI Rewrite** Evaluates bitmasks in step_rewrite to generate dynamic Gemini prompt instructions tailored specifically to each post's flagged issues.
