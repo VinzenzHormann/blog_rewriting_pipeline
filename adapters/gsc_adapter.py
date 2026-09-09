@@ -94,91 +94,36 @@ def fetch_page_seo_data(site_url, top_n=5):
     print(f"length of dict: {len(results)}")
     return results
     
-    
-# NEW UNİNDEXED INFO INPUT: instead of seraching for no gsc_position a list of unindexed site is manualy exported form GSC as .csv format and integrated into the pipeline.   
-# def inspect_urls_index_status(no_position_no_keyword_posts):
-    
-    # print(f"Found {len(no_position_no_keyword_posts)} posts missing GSC metrics in pipeline.db.")    
-    
-    # if not os.path.exists(CREDENTIALS_FILE):
-        # raise FileNotFoundError(f"Missing credentials file: {CREDENTIALS_FILE} in project root.")
+def inspect_urls_index_status(no_position_posts):
+    """
+    Runs each post through GSC's URL Inspection API and returns the raw
+    coverageState string per post. Does NOT decide what it means -- that
+    interpretation belongs entirely to classify_posts_bitmask.
+    """
+    print(f"Inspecting {len(no_position_posts)} posts with no GSC position...")
 
-    # creds = service_account.Credentials.from_service_account_file(
-        # CREDENTIALS_FILE, scopes=SCOPES
-    # )
-    # service = build('searchconsole', 'v1', credentials=creds)
+    if not os.path.exists(CREDENTIALS_FILE):
+        raise FileNotFoundError(f"Missing credentials file: {CREDENTIALS_FILE} in project root.")
+
+    creds = service_account.Credentials.from_service_account_file(
+        CREDENTIALS_FILE, scopes=SCOPES
+    )
+    service = build('searchconsole', 'v1', credentials=creds)
+
+    results = []
+    for post_id, url in no_position_posts:
+        request_body = {'inspectionUrl': url, 'siteUrl': BASE_URL}
+        try:
+            response = service.urlInspection().index().inspect(body=request_body).execute()
+            result = response.get('inspectionResult', {}).get('indexStatusResult', {})
+            coverage_state = result.get('coverageState', 'UNKNOWN')
+            results.append((post_id, url, coverage_state))
+            print(f"  {url} -> {coverage_state}")
+            time.sleep(0.2)
+        except Exception as e:
+            print(f"Error inspecting {url}: {e}")
+
+    print(f"\nInspected {len(results)} posts.")
+    return results
 
 
-    # indexed_no_traffic = []
-    # not_indexed = []
-
-    # for post_id, url in no_position_no_keyword_posts:
-        # request_body = {
-            # 'inspectionUrl': url,
-            # 'siteUrl': BASE_URL
-        # }
-        
-        # try:
-            # # Query the GSC URL Inspection API
-            # response = service.urlInspection().index().inspect(body=request_body).execute()
-            # result = response.get('inspectionResult', {}).get('indexStatusResult', {})
-            
-            # coverage_state = result.get('coverageState', 'UNKNOWN')
-            # verdict = result.get('verdict', 'NEUTRAL')
-
-            # if verdict == 'PASS':
-                # indexed_no_traffic.append(url)
-                # print(f"[INDEXED / NO TRAFFIC] {url}")
-            # else:
-                # not_indexed.append((url, coverage_state))
-                # print(f"[NOT INDEXED] {url} -> Status: {coverage_state}")
-
-            # # Sleep slightly to avoid rate-limiting
-            # time.sleep(0.2)
-
-        # except Exception as e:
-            # print(f"Error inspecting {url}: {e}")
-
-    # print("\n--- SUMMARY ---")
-    # print(f"Indexed (but 0 impressions): {len(indexed_no_traffic)}")
-    # print(f"Not Indexed: {len(not_indexed)}")
-    
-    # return {
-        # "indexed": indexed_no_traffic,
-        # "not_indexed": not_indexed
-    # }
- 
-def parse_gsc_unindexed_csv(file_path):
-    unindexd_posts = []
-
-    # Patterns to ignore completely
-    IGNORED_PATTERNS = [
-        "/feed", "/page/", "wp-includes", "plugins", 
-        "/etkinlikler", "/tag/", "/category/", "/iletisim"
-    ]
-
-    with open(file_path, mode='r', encoding='utf-8') as f:
-        reader = csv.DictReader(f)
-        
-        for row in reader:
-            # Handle potential header casing variations (e.g., 'URL' vs 'url')
-            raw_url = row.get('URL') or row.get('url') or row.get('Page') or ''
-            url = raw_url.strip()
-
-            if not url:
-                continue
-
-            # 1. Ignore noise, feeds, static assets, and manual archives
-            if any(pattern in url for pattern in IGNORED_PATTERNS):
-                continue
-
-            # 2. Flag 'uncategorized' for manual fixes
-            if "/uncategorized/" in url:
-                unindexd_posts.append((url, "manual_fix_uncategorized"))
-                continue
-
-            # 3. Valid unindexed blog post -> Flag for LLM rewrite
-            unindexd_posts.append((url, "crawled_unindexed"))
-
-    print(f"Parsed {len(unindexd_posts)} actionable URLs from GSC CSV.")
-    return unindexd_posts 

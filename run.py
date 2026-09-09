@@ -11,8 +11,28 @@ from datetime import datetime, timezone
 from core.schema import init_db, get_connection
 from adapters import wp_freyaart, gsc_adapter
 BASE_URL = "https://www.freyartt.com/"
-CRAWLED_NOT_INDEXED_GSC_CSV_FILE_PATH = "crawled_currently_not_indexed.csv"
 
+
+# Define Flag Bitmasks
+FLAG_NO_CATEGORY        = 1   # 00000001
+FLAG_NO_SUBHEADINGS     = 2   # 00000010
+FLAG_STRIKING_DISTANCE  = 4   # 00000100
+FLAG_NO_POSITION_TECHNICAL_ISSUE         = 8   # 00001000
+FLAG_THIN_CONTENT       = 16  # 00010000
+FLAG_CRAWLED_NOT_INDEXED= 32  # 00100000
+FLAG_NO_POSITION_SUBM_AND_INDEXED = 64 #01000000 
+#position 8 10000000 EMPTY
+
+
+FLAG_NAMES = {
+    FLAG_NO_CATEGORY: "no_category",
+    FLAG_NO_SUBHEADINGS: "no_subheadings",
+    FLAG_STRIKING_DISTANCE: "striking_distance",
+    FLAG_THIN_CONTENT: "thin_content",
+    FLAG_CRAWLED_NOT_INDEXED: "crawled_not_indexed",
+    FLAG_NO_POSITION_SUBM_AND_INDEXED: "submitted_and_indexed_no_traffic",
+    FLAG_NO_POSITION_TECHNICAL_ISSUE: "technical_issue",
+}
 def step_fetch(args):
     init_db()
     conn = get_connection()
@@ -41,121 +61,120 @@ def step_fetch(args):
     print(f"\nDone. {count} posts stored in pipeline.db")
     conn.commit()
 
+   
+    
 def step_update_gsc(args):
     init_db()
     conn = get_connection()
     now = datetime.now(timezone.utc).isoformat()
-    seo_data = parse_gsc_unindexed_csv(file_path)   
-    
+    seo_data = gsc_adapter.fetch_page_seo_data(BASE_URL)   
+
     for url, data in seo_data.items():
-        
+
         # Convert list of keywords to JSON string if returned as a list
         keywords = json.dumps(data['top_keywords']) if isinstance(data['top_keywords'], list) else data['top_keywords']
         conn.execute(
             "UPDATE posts SET gsc_position = ?, top_keywords = ? WHERE url = ?",
             (data['position'], keywords, url)
         )
-        
-    
+
+
     conn.commit()
     conn.close()
     print(f"\nDone. Updated posts with GSC positions and keywords.")
-# NEW UNİNDEXED INFO INPUT: instead of seraching for no gsc_position a list of unindexed site is manualy exported form GSC as .csv format and integrated into the pipeline.   
-# def step_search_for_not_indexed_posts(args):
-    # init_db()
-    # conn = get_connection()
-    # now = datetime.now(timezone.utc).isoformat()
-    
-    # cursor = conn.cursor()
-    # cursor.execute("""
-        # SELECT post_id, url 
-        # FROM posts 
-        # WHERE gsc_position IS NULL OR gsc_position = 0
-    # """)
-    # no_position_no_keyword_posts = cursor.fetchall()
-    
-    # if not no_position_no_keyword_posts:
-        # print("No unranked posts found in database.")
-        # conn.close()
-        # return
-    
-    # unindexed_status_results = gsc_adapter.inspect_urls_index_status(no_position_no_keyword_posts)
-    
-# #    for url in unindexed_status_results["indexed"]:
-# #        conn.execute(
-# #            "UPDATE posts SET status = 'zero_traffic', updated_at = ? WHERE url = ?",
-# #            now, url)
-# #        )
-    
-    # for url, coverage_state in unindexed_status_results["not_indexed"]:
-        # conn.execute(
-            # "UPDATE posts SET status = 'not_indexed', updated_at = ? WHERE url = ?",
-            # (now, url)
-        # )
-    
-    # conn.commit()
-    # conn.close()
-    
-    # print(f"\nSuccessfully updated database status for {len(no_position_no_keyword_posts)} posts:")
-    # #print(f" - {len(results['indexed'])} marked as 'zero_traffic'")
-    # print(f" - {len(results['not_indexed'])} marked as 'not_indexed'")
-
-def step_include_unindexed_tag_from_gcs_csv(args):
+ 
+def step_classify_posts_bitmask(args):
     init_db()
     conn = get_connection()
-    cursor = conn.cursor()
-    
     now = datetime.now(timezone.utc).isoformat()
-    crawled_currently_not_indexed_urls = gsc_adapter.parse_gsc_unindexed_csv(CRAWLED_NOT_INDEXED_GSC_CSV_FILE_PATH)   
-    
-    sql_update = """
-        UPDATE posts 
-        SET status = ? 
-        WHERE url = ?
-    """
-    
-    reordered_data = [(status, url) for url, status in crawled_currently_not_indexed_urls]
-    cursor.executemany(sql_update, reordered_data)
-    
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT post_id, category, subheadings, gsc_position, body, coverage_state
+        FROM posts
+    """)
+    posts = cursor.fetchall()
+
+    print("Classifying posts in pipeline.db...")
+
+    for post_id, category, subheadings, gsc_position, body, coverage_state in posts:
+        flags = 0
+        word_count = len((body or "").split())
+
+        if not category or "uncategorized" in str(category).lower():
+            flags |= FLAG_NO_CATEGORY
+        if not subheadings or subheadings in ["[]", ""]:
+            flags |= FLAG_NO_SUBHEADINGS
+        if gsc_position and 8.0 <= gsc_position <= 20.0:
+            flags |= FLAG_STRIKING_DISTANCE
+        if word_count < 400:
+            flags |= FLAG_THIN_CONTENT
+
+        if coverage_state == 'Crawled - currently not indexed':
+            flags |= FLAG_CRAWLED_NOT_INDEXED
+        elif coverage_state == 'Submitted and indexed':
+            flags |= FLAG_NO_POSITION_SUBM_AND_INDEXED
+        elif coverage_state is not None:
+            flags |= FLAG_NO_POSITION_TECHNICAL_ISSUE
+
+        if flags & FLAG_NO_CATEGORY or flags & FLAG_NO_POSITION_TECHNICAL_ISSUE:
+            status = "manual_fix_needed"
+        elif flags == 0:
+            status = "No_fix_needed"
+        else:
+            status = "ready_for_rewrite"
+
+        # Human-readable summary, built from whichever flags actually fired
+        triggered = [name for flag_val, name in FLAG_NAMES.items() if flags & flag_val]
+        summary = ", ".join(triggered) if triggered else "none"
+        if coverage_state:
+            summary += f" (gsc: {coverage_state})"
+
+        cursor.execute(
+            "UPDATE posts SET flags = ?, status = ?, flag_summary = ?, updated_at = ? WHERE post_id = ?",
+            (flags, status, summary, now, post_id)
+        )
+
     conn.commit()
     conn.close()
-    print(f"Updated {cursor.rowcount} rows successfully.")
-def debug(args):
-    crawled_currently_not_indexed_urls = gsc_adapter.parse_gsc_unindexed_csv(CRAWLED_NOT_INDEXED_GSC_CSV_FILE_PATH)  
-    # Connect to database
+    print("Classification complete.")
+    
+def step_search_for_not_indexed_posts(args):
+    init_db()
     conn = get_connection()
-    db_urls = set(row[0] for row in conn.execute("SELECT url FROM posts").fetchall())
+    now = datetime.now(timezone.utc).isoformat()
 
-    # Normalize URLs function (strips trailing slash & lowercases)
-    def normalize(u):
-        return u.strip().rstrip("/").lower()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT post_id, url FROM posts
+        WHERE gsc_position IS NULL OR gsc_position = 0
+    """)
+    no_position_posts = cursor.fetchall()
 
-    db_urls_normalized = {normalize(u) for u in db_urls}
+    if not no_position_posts:
+        print("No unranked posts found in database.")
+        conn.close()
+        return
 
-    # Load parsed CSV URLs
-    # (Replace this list with your actual parsed 173 tuple list)
-    csv_urls = [url for url, _ in crawled_currently_not_indexed_urls]
+    results = gsc_adapter.inspect_urls_index_status(no_position_posts)
 
-    missing_exact = []
-    missing_normalized = []
+    for post_id, url, coverage_state in results:
+        cursor.execute(
+            "UPDATE posts SET coverage_state = ?, updated_at = ? WHERE post_id = ?",
+            (coverage_state, now, post_id)
+        )
 
-    for url in csv_urls:
-        if url not in db_urls:
-            missing_exact.append(url)
-            if normalize(url) not in db_urls_normalized:
-                missing_normalized.append(url)
+    conn.commit()
+    conn.close()
+    print(f"Recorded coverage_state for {len(results)} inspected posts.")
+ 
 
-    print(f"Exact string mismatches: {len(missing_exact)}")
-    print(f"Mismatches even after stripping trailing slashes/case: {len(missing_normalized)}")
-    print("\nSample of missing URLs from DB:")
-    for u in missing_exact[:10]:
-        print(" - ", u)    
+        
 def main():
     parser = argparse.ArgumentParser(description="Freya Art blog automation pipeline")
     parser.add_argument(
         "--step", 
         required=True, 
-        choices=["fetch", "rank", "all", "include_crlawed_not_listed_csv","debug", "rewrite", "review", "publish"]
+        choices=["fetch", "rank", "classify", "all", "rewrite", "review", "publish"]
     )
     parser.add_argument(
         "--limit", type=int, default=None, help="Limit number of posts (handy for testing)"
@@ -166,17 +185,20 @@ def main():
         step_fetch(args)
     elif args.step == "rank":
         step_update_gsc(args)
-    elif args.step == "include_crlawed_not_listed_csv":
-        step_include_unindexed_tag_from_gcs_csv(args)
-    elif args.step == "debug":
-        debug(args)
+    elif args.step == "classify":
+        step_search_for_not_indexed_posts(args)
+        step_classify_posts_bitmask(args)
+        
     elif args.step == "all":
         print("--- Step 1: Fetching WordPress Posts ---")
         step_fetch(args)
         print("\n--- Step 2: Updating GSC Metrics ---")
         step_update_gsc(args)
-        print("\n--- Step 3: Chanking not indexed posts---")
-        step_include_unindexed_tag_from_gcs_csv(args)
+        print("\n--- Step 3: classifying posts status ---")
+        step_search_for_not_indexed_posts(args)
+        step_classify_posts_bitmask(args)
+        
+
     else:
         print(f"Step '{args.step}' isn't built yet -- that's the next piece to add.")
 if __name__ == "__main__":
