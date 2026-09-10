@@ -4,3 +4,5 @@ markdownify
 google-auth
 google-api-python-client
 python-dateutil
+anthropic
+python-dotenv
